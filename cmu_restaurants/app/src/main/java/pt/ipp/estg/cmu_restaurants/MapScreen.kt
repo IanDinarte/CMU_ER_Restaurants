@@ -1,12 +1,9 @@
 import Models.Geoapify.GeoapifyPlacesResponse
 import Models.Geoapify.GeoapifyService
 import Models.Geoapify.PlaceProperties
-import android.Manifest
 import android.annotation.SuppressLint
-import android.content.Context
-import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.os.Bundle
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,43 +11,24 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SearchBar
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.app.ActivityCompat
 import androidx.navigation.NavController
-import com.google.type.LatLng
+import com.google.firebase.firestore.FirebaseFirestore
 import com.mapbox.geojson.Point
-import com.mapbox.geojson.LineString
-import com.mapbox.geojson.utils.PolylineUtils
-import com.mapbox.maps.CameraOptions
-import com.mapbox.maps.MapView
-import com.mapbox.maps.MapboxMap
-import com.mapbox.maps.extension.compose.DisposableMapEffect
 import com.mapbox.maps.extension.compose.MapEffect
 import com.mapbox.maps.extension.compose.MapboxMap
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
-import com.mapbox.maps.extension.style.layers.addLayer
-import com.mapbox.maps.extension.style.layers.generated.LineLayer
-import com.mapbox.maps.extension.style.sources.addSource
-import com.mapbox.maps.extension.style.sources.generated.GeoJsonSource
-import com.mapbox.maps.plugin.Plugin
 import com.mapbox.maps.plugin.PuckBearing
 import com.mapbox.maps.plugin.annotation.annotations
 import com.mapbox.maps.plugin.annotation.generated.PointAnnotationOptions
@@ -62,12 +40,13 @@ import com.mapbox.maps.plugin.locationcomponent.location
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import pt.ipp.estg.cmu_restaurants.Models.MapboxGeocodingApi
+import pt.ipp.estg.cmu_restaurants.Models.Restaurant
+
 import retrofit2.Call
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import retrofit2.Response
 import pt.ipp.estg.cmu_restaurants.R
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -83,7 +62,11 @@ fun MapScreen(navController: NavController, userId: String?) {
         .build()
     val geoapifyService = retrofit.create(GeoapifyService::class.java)
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.primary)
+    ) {
         ButtonBar(navController = navController, userId = userId)
 
         Row(modifier = Modifier.fillMaxSize()) {
@@ -91,7 +74,7 @@ fun MapScreen(navController: NavController, userId: String?) {
                 RestaurantSidebar(
                     restaurants = nearbyRestaurants.value,
                     onSelectRestaurant = { restaurant ->
-                        println("Selected restaurant: ${restaurant.name}")
+                        findRestaurantByDetails(restaurant, navController)
                     }
                 )
             }
@@ -114,9 +97,23 @@ fun MapScreen(navController: NavController, userId: String?) {
                     mapViewportState.transitionToFollowPuckState()
 
                     mapView.getMapboxMap().getStyle { style ->
-                        val bitmap =
+                        // Load the original marker images
+                        val bitmap1 =
                             BitmapFactory.decodeResource(context.resources, R.drawable.red_marker)
-                        style.addImage("red_marker", bitmap)
+                        val bitmap2 = BitmapFactory.decodeResource(
+                            context.resources,
+                            R.drawable.restaurant_icon
+                        )
+
+                        // Resize both bitmaps to make them smaller
+                        val scaledBitmap1 =
+                            Bitmap.createScaledBitmap(bitmap1, 50, 50, false)  // Scale to 50x50
+                        val scaledBitmap2 =
+                            Bitmap.createScaledBitmap(bitmap2, 50, 50, false)  // Scale to 50x50
+
+                        // Add the scaled images to the style
+                        style.addImage("red_marker", scaledBitmap1)
+                        style.addImage("restaurant_icon", scaledBitmap2)
                     }
 
                     val onClickListener = object : OnMapClickListener {
@@ -129,12 +126,7 @@ fun MapScreen(navController: NavController, userId: String?) {
                                 Log.DEBUG,
                                 "Log",
                                 "latitude: " + latitude + "; longitude: " + longitude
-                            );
-                            Log.println(
-                                Log.DEBUG,
-                                "Log",
-                                "restaurants: " + nearbyRestaurants.value
-                            );
+                            )
 
                             val novoMarker = PointAnnotationOptions()
                                 .withPoint(point)
@@ -149,6 +141,20 @@ fun MapScreen(navController: NavController, userId: String?) {
                                 "9a5d8dd32d7c49709e75789d2d28c52d"
                             ) { restaurants ->
                                 nearbyRestaurants.value = restaurants
+
+                                nearbyRestaurants.value.forEach { restaurant ->
+                                    if (restaurant.name != null) {
+
+                                        val restaurantPoint =
+                                            Point.fromLngLat(restaurant.lon, restaurant.lat)
+
+                                        val restaurantMarker = PointAnnotationOptions()
+                                            .withPoint(restaurantPoint)
+                                            .withIconImage("restaurant_icon")
+
+                                        pointAnnotationManager.create(restaurantMarker)
+                                    }
+                                }
                             }
 
                             return true
@@ -199,6 +205,66 @@ fun fetchNearbyRestaurants(
     })
 }
 
+fun findRestaurantByDetails(
+    place: PlaceProperties,
+    navController: NavController
+) = CoroutineScope(Dispatchers.IO).launch {
+    val db = FirebaseFirestore.getInstance()
+
+    try {
+        val querySnapshot = db.collection("restaurants")
+            .whereEqualTo("address", place.formatted)
+            .whereEqualTo("lat", place.lat)
+            .whereEqualTo("lon", place.lon)
+            .get()
+            .await()
+
+        val restaurant = if (!querySnapshot.isEmpty) {
+            querySnapshot.documents.first().toObject(Restaurant::class.java)!!
+        } else {
+            val newRestaurant = Restaurant(
+                restaurantName = place.name.toString(),
+                rating = 5.0,
+                address = place.formatted.toString(),
+                lat = place.lat,
+                lon = place.lon,
+            )
+            saveRestaurant(newRestaurant, db)
+            newRestaurant
+        }
+
+        withContext(Dispatchers.Main) {
+            Log.d("Log", "Selected restaurant: $restaurant")
+            navController.navigate("restaurantProfile/${restaurant.restaurantId}")
+        }
+    } catch (exception: Exception) {
+        withContext(Dispatchers.Main) {
+            Log.e("Log", "Error finding restaurant: ${exception.message}")
+        }
+    }
+}
+
+fun saveRestaurant(restaurant: Restaurant, db: FirebaseFirestore) =
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val restaurantData = hashMapOf(
+                "restaurantId" to restaurant.restaurantId,
+                "restaurantName" to restaurant.restaurantName,
+                "rating" to restaurant.rating,
+                "address" to restaurant.address,
+                "lat" to restaurant.lat,
+                "lon" to restaurant.lon
+            )
+
+            db.collection("restaurants").document(restaurant.restaurantId).set(restaurantData)
+                .await()
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Log.println(Log.DEBUG, "Log", e.message.toString());
+            }
+        }
+    }
+
 @Composable
 fun ButtonBar(
     navController: NavController,
@@ -215,11 +281,23 @@ fun ButtonBar(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            Button(onClick = { navController.navigate("userProfile/$userId") }) {
+            Button(
+                onClick = { navController.navigate("userProfile/$userId") },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            ) {
                 Text(text = "Profile")
             }
-            Button(onClick = { navController.navigate("reviews/$userId") }) {
-                Text(text = "Your Reviews")
+            Button(
+                onClick = { navController.navigate("reviews/$userId") },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            ) {
+                Text(text = "Reviews")
+            }
+            Button(
+                onClick = { navController.navigate("leaderBoard") },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            ) {
+                Text(text = "LeaderBoard")
             }
         }
     }
@@ -234,21 +312,40 @@ fun RestaurantSidebar(
         modifier = Modifier
             .width(200.dp)
             .fillMaxHeight()
-            .background(Color.Magenta)
+            .background(MaterialTheme.colorScheme.primary)
             .padding(8.dp)
     ) {
-        Text("Nearby Restaurants", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            "Restaurants",
+            color = MaterialTheme.colorScheme.background,
+            style = MaterialTheme.typography.headlineMedium
+        )
         Spacer(modifier = Modifier.height(8.dp))
         restaurants.forEach { restaurant ->
-            val restaurantName = restaurant.name ?: "Unknown Restaurant"
-            Text(
-                text = restaurantName,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelectRestaurant(restaurant) }
-                    .padding(8.dp),
-                style = MaterialTheme.typography.bodyMedium
-            )
+            val restaurantName = restaurant.name
+            if (restaurantName != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.secondary,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        .clickable { onSelectRestaurant(restaurant) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "${restaurant.formatted}",
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+
+            }
         }
     }
 }

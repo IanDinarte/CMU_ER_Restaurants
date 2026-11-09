@@ -13,16 +13,6 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.google.firebase.firestore.FirebaseFirestoreSettings
@@ -30,6 +20,7 @@ import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
 import com.mapbox.android.core.permissions.PermissionsListener
 import com.mapbox.android.core.permissions.PermissionsManager
+import pt.ipp.estg.cmu_restaurants.services.RestaurantNotificationService
 import pt.ipp.estg.cmu_restaurants.ui.theme.Cmu_restaurantsTheme
 
 class MainActivity : ComponentActivity(), PermissionsListener {
@@ -39,13 +30,19 @@ class MainActivity : ComponentActivity(), PermissionsListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        permissionsManager = PermissionsManager(this)
 
         if (PermissionsManager.areLocationPermissionsGranted(this)) {
+            Log.d("MainActivity", "Permissions already granted")
             Toast.makeText(this, "Activated location", Toast.LENGTH_LONG).show()
         } else {
+            Log.d("MainActivity", "Requesting location permissions")
             permissionsManager = PermissionsManager(this)
             permissionsManager.requestLocationPermissions(this)
         }
+
+        val serviceIntent = Intent(this, RestaurantNotificationService::class.java)
+        startForegroundService(serviceIntent)
 
         if (powerManager.isPowerSaveMode) {
             applyPowerSaveModeAdjustments()
@@ -58,9 +55,7 @@ class MainActivity : ComponentActivity(), PermissionsListener {
 
         setContent {
             Cmu_restaurantsTheme {
-                Surface(color = MaterialTheme.colorScheme.background) {
-                    MainScreen()
-                }
+                MainScreen()
             }
         }
     }
@@ -70,20 +65,22 @@ class MainActivity : ComponentActivity(), PermissionsListener {
         permissions: Array<String>,
         grantResults: IntArray
     ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         permissionsManager.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
     override fun onExplanationNeeded(permissionsToExplain: List<String>) {
-        // Provide explanation to the user (e.g., Toast or Dialog)
-        Toast.makeText(this, "Location permission is needed to show your location.", Toast.LENGTH_LONG).show()
+        Toast.makeText(
+            this,
+            "Location permission is needed to show your location.",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     override fun onPermissionResult(granted: Boolean) {
         if (granted) {
             Toast.makeText(this, "Activated location", Toast.LENGTH_LONG).show()
         } else {
-            // Permission denied, handle accordingly
             Toast.makeText(this, "Location permission not granted.", Toast.LENGTH_LONG).show()
         }
     }
@@ -103,7 +100,8 @@ private fun restoreNormalModeAdjustments() {
 }
 
 private fun showPowerSaveModeNotification(context: Context) {
-    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    val notificationManager =
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     val notificationId = 1
     val channelId = "power_save_mode_channel"
 
